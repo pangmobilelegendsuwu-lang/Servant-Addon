@@ -1,0 +1,52 @@
+name: Build from zip
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history, needed to find which zip was added/changed last
+
+      - name: Unzip newest zip
+        run: |
+          # Pick the zip that was committed most recently (NOT alphabetical order:
+          # "sort -V" ranked "...-fixed-localruntime.zip" above "...v2.zip").
+          ZIP=""; BEST=0
+          for z in *.zip; do
+            t=$(git log -1 --format=%ct -- "$z")
+            if [ "${t:-0}" -gt "$BEST" ]; then BEST=$t; ZIP=$z; fi
+          done
+          [ -n "$ZIP" ] || { echo "::error::No .zip found in repo root"; exit 1; }
+          echo "Using zip: $ZIP"
+          mkdir work && unzip -q "$ZIP" -d work
+          ROOT=$(dirname "$(find work -name build.gradle | head -1)")
+          echo "ROOT=$ROOT" >> $GITHUB_ENV
+
+      - name: Check Servant jar is present
+        run: |
+          if ! ls "$ROOT"/libs/*.jar >/dev/null 2>&1; then
+            echo "::error::No Servant jar in $ROOT/libs/ - the zip you pushed has no jar inside libs/"
+            exit 1
+          fi
+          ls -l "$ROOT"/libs/
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.10.2
+
+      - name: Build
+        run: gradle build --no-daemon
+        working-directory: ${{ env.ROOT }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: servant_addon-jar
+          path: ${{ env.ROOT }}/build/libs/*.jar
